@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SerenimeID_Database_Blueprint",
+  "version": "1.0.0",
+  "entities": {
+    "Anime": {
+      "collection": "anime",
+      "documentId": "{animeId}",
+      "fields": {
+        "title": { "type": "string" },
+        "synopsis": { "type": "string" },
+        "posterUrl": { "type": "string" },
+        "rating": { "type": "number" },
+        "genres": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string" },
+        "totalEpisodes": { "type": "number" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      }
+    },
+    "Episode": {
+      "collection": "anime/{animeId}/episodes",
+      "documentId": "{episodeId}",
+      "fields": {
+        "episodeNumber": { "type": "number" },
+        "title": { "type": "string" },
+        "streamSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          }
+        },
+        "downloadLinks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "quality": { "type": "string" },
+              "host": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          }
+        },
+        "createdAt": { "type": "timestamp" }
+      }
+    },
+    "User": {
+      "collection": "users",
+      "documentId": "{userId}",
+      "fields": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "role": { "type": "string" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      }
+    },
+    "Favorite": {
+      "collection": "users/{userId}/favorites",
+      "documentId": "{animeId}",
+      "fields": {
+        "animeId": { "type": "string" },
+        "title": { "type": "string" },
+        "posterUrl": { "type": "string" },
+        "rating": { "type": "number" },
+        "addedAt": { "type": "timestamp" }
+      }
+    }
+  }
+}

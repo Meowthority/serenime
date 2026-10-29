@@ -8,13 +8,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.ui.components.AdblockDetector
 import com.example.ui.components.SerenimeBottomNavBar
-import com.example.ui.theme.SerenimeTheme
 import com.example.ui.screens.*
+import com.example.ui.theme.SerenimeTheme
 
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -23,22 +26,86 @@ class MainActivity : ComponentActivity() {
     setContent {
       SerenimeTheme {
         val navController = rememberNavController()
-        var currentRoute by remember { mutableStateOf("home") }
+        val navBackStackEntry by navController.currentBackStackEntryAsState()
+        val currentDestination = navBackStackEntry?.destination?.route ?: "home"
+
+        val showBottomBar = !currentDestination.startsWith("watch") && currentDestination != "admin"
 
         Scaffold(
-          bottomBar = { SerenimeBottomNavBar(currentRoute) { route -> 
-            currentRoute = route
-            navController.navigate(route) 
-          } }
+          bottomBar = {
+            if (showBottomBar) {
+              SerenimeBottomNavBar(currentDestination) { route ->
+                if (currentDestination != route) {
+                  navController.navigate(route) {
+                    popUpTo("home") { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                  }
+                }
+              }
+            }
+          }
         ) { innerPadding ->
           Box(modifier = Modifier.padding(innerPadding)) {
             AdblockDetector {}
             NavHost(navController = navController, startDestination = "home") {
-              composable("home") { HomeScreen() }
-              composable("list") { ListScreen() }
-              composable("schedule") { ScheduleScreen() }
-              composable("bookmark") { BookmarkScreen() }
-              composable("profile") { ProfileScreen() }
+              composable("home") {
+                HomeScreen(
+                  onNavigateToWatch = { animeId ->
+                    navController.navigate("watch/$animeId")
+                  }
+                )
+              }
+              composable("list") {
+                ListScreen(
+                  onNavigateToWatch = { animeId ->
+                    navController.navigate("watch/$animeId")
+                  }
+                )
+              }
+              composable("schedule") {
+                ScheduleScreen(
+                  onNavigateToWatch = { animeId ->
+                    navController.navigate("watch/$animeId")
+                  }
+                )
+              }
+              composable("bookmark") {
+                BookmarkScreen(
+                  onNavigateToWatch = { animeId ->
+                    navController.navigate("watch/$animeId")
+                  },
+                  onNavigateToProfile = {
+                    navController.navigate("profile")
+                  }
+                )
+              }
+              composable("profile") {
+                ProfileScreen(
+                  onOpenAdminPanel = {
+                    navController.navigate("admin")
+                  }
+                )
+              }
+              composable("admin") {
+                AdminPanelScreen(
+                  onBack = {
+                    navController.popBackStack()
+                  }
+                )
+              }
+              composable(
+                route = "watch/{animeId}",
+                arguments = listOf(navArgument("animeId") { type = NavType.StringType })
+              ) { backStackEntry ->
+                val animeId = backStackEntry.arguments?.getString("animeId") ?: ""
+                WatchScreen(
+                  animeId = animeId,
+                  onBack = {
+                    navController.popBackStack()
+                  }
+                )
+              }
             }
           }
         }

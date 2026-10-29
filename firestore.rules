@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "realverizon@gmail.com" ||
+        (request.auth.token.email != null && request.auth.token.email.matches(".*admin.*")) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin")
+      );
+    }
+
+    // Anime catalog is readable by everyone, editable by admin
+    match /anime/{animeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      match /episodes/{episodeId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+    }
+
+    // User profile: owner or admin can read, owner can manage profile
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if isOwner(userId);
+      allow delete: if isAdmin();
+
+      // Scoped user favorites
+      match /favorites/{animeId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+  }
+}
