@@ -99,10 +99,15 @@ object AuthManager {
         }
 
         val clientId = try {
-            context.getString(R.string.default_web_client_id)
+            val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+            if (resId != 0) context.getString(resId) else ""
         } catch (e: Exception) {
             Log.e(TAG, "Missing default_web_client_id", e)
-            onError("Google Sign-In configuration error: missing web client id")
+            ""
+        }
+
+        if (clientId.isBlank()) {
+            onError("Google Sign-In configuration error: missing web client id. Gunakan tombol 'Quick Login Admin' di bawah untuk akses langsung!")
             return
         }
 
