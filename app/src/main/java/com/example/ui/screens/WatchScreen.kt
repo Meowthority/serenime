@@ -3,8 +3,14 @@ package com.example.ui.screens
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
+import android.view.View
 import android.view.ViewGroup
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -63,7 +69,10 @@ fun WatchScreen(
                 id = "${currentAnime.id}-ep-1",
                 episodeNumber = 1,
                 title = "Episode 1: Permulaan",
-                streamSources = listOf(StreamSource("HD", "https://upbolt.to/e/u2jey90afkvg")),
+                streamSources = listOf(
+                    StreamSource("Upbolt HD", "https://upbolt.to/e/u2jey90afkvg"),
+                    StreamSource("Streamwish", "https://streamwish.to/e/example")
+                ),
                 downloadLinks = listOf(
                     DownloadLink("1080p", "VIKING", "https://vikingfile.com/f/KyiS4sIbps"),
                     DownloadLink("720p", "FILEQ", "https://fileq.io/d/example720"),
@@ -74,7 +83,9 @@ fun WatchScreen(
                 id = "${currentAnime.id}-ep-2",
                 episodeNumber = 2,
                 title = "Episode 2: Babak Selanjutnya",
-                streamSources = listOf(StreamSource("HD", "https://upbolt.to/e/u2jey90afkvg")),
+                streamSources = listOf(
+                    StreamSource("Upbolt HD", "https://upbolt.to/e/u2jey90afkvg")
+                ),
                 downloadLinks = listOf(
                     DownloadLink("1080p", "VIKING", "https://vikingfile.com/f/KyiS4sIbps"),
                     DownloadLink("720p", "FILEQ", "https://fileq.io/d/example720")
@@ -86,9 +97,19 @@ fun WatchScreen(
     var selectedEpisodeNumber by remember { mutableIntStateOf(1) }
     val currentEpisode = episodes.find { it.episodeNumber == selectedEpisodeNumber } ?: episodes.firstOrNull()
 
+    var selectedServerIndex by remember { mutableIntStateOf(0) }
+    val streamSources = currentEpisode?.streamSources?.ifEmpty { null } ?: listOf(
+        StreamSource("Upbolt HD", "https://upbolt.to/e/u2jey90afkvg")
+    )
+    val activeStreamUrl = streamSources.getOrNull(selectedServerIndex)?.url ?: streamSources.first().url
+
     var isFavorite by remember { mutableStateOf(false) }
     var isDownloadExpanded by remember { mutableStateOf(true) }
     var isPlayerLoading by remember { mutableStateOf(true) }
+    var isRendererCrashed by remember { mutableStateOf(false) }
+    var reloadTrigger by remember { mutableIntStateOf(0) }
+
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     // Listen to user favorite status
     val userFavorites by repo.observeFavorites(currentUser?.uid ?: "").collectAsState(initial = emptyList())
@@ -96,8 +117,23 @@ fun WatchScreen(
         isFavorite = userFavorites.any { it.animeId == currentAnime.id }
     }
 
-    val activeStreamUrl = currentEpisode?.streamSources?.firstOrNull()?.url
-        ?: "https://upbolt.to/e/u2jey90afkvg"
+    // Lifecycle cleanup for WebView to prevent renderer leak crashes
+    DisposableEffect(activeStreamUrl, reloadTrigger) {
+        onDispose {
+            try {
+                webViewRef?.apply {
+                    stopLoading()
+                    loadUrl("about:blank")
+                    clearHistory()
+                    (parent as? ViewGroup)?.removeView(this)
+                    destroy()
+                }
+                webViewRef = null
+            } catch (e: Exception) {
+                Log.w("WatchScreen", "WebView cleanup exception: ${e.message}")
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -154,51 +190,162 @@ fun WatchScreen(
                 .padding(paddingValues)
                 .verticalScroll(rememberScrollState())
         ) {
-            // 1. Video Player Container (Aspect Ratio 16:9)
+            // 1. Video Player Container (Aspect Ratio 16:9) with Crash Protection
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
                     .background(Color.Black)
             ) {
-                AndroidView(
-                    factory = { ctx ->
-                        WebView(ctx).apply {
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.mediaPlaybackRequiresUserGesture = false
-                            settings.loadWithOverviewMode = true
-                            settings.useWideViewPort = true
-                            webChromeClient = WebChromeClient()
-                            webViewClient = object : WebViewClient() {
-                                override fun onPageFinished(view: WebView?, url: String?) {
-                                    isPlayerLoading = false
-                                }
-                            }
-                            loadUrl(activeStreamUrl)
-                        }
-                    },
-                    update = { webView ->
-                        if (webView.url != activeStreamUrl) {
-                            isPlayerLoading = true
-                            webView.loadUrl(activeStreamUrl)
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                if (isPlayerLoading) {
-                    Box(
+                if (isRendererCrashed) {
+                    // Graceful Crash Recovery UI
+                    Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.5f)),
-                        contentAlignment = Alignment.Center
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Pemutar Video Mengalami Gangguan Render",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Browser virtual emulator membatasi iframe eksternal.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.LightGray
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    isRendererCrashed = false
+                                    isPlayerLoading = true
+                                    reloadTrigger++
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Text("Muat Ulang", fontSize = 12.sp)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(activeStreamUrl))
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Tidak dapat membuka URL", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            ) {
+                                Text("Buka di Browser Luar", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                } else {
+                    key(reloadTrigger, activeStreamUrl) {
+                        AndroidView(
+                            factory = { ctx ->
+                                WebView(ctx).apply {
+                                    webViewRef = this
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT
+                                    )
+                                    // Use hardware layer, or software layer if needed
+                                    setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+                                    settings.javaScriptEnabled = true
+                                    settings.domStorageEnabled = true
+                                    settings.mediaPlaybackRequiresUserGesture = false
+                                    settings.loadWithOverviewMode = true
+                                    settings.useWideViewPort = true
+                                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+
+                                    webChromeClient = WebChromeClient()
+                                    webViewClient = object : WebViewClient() {
+                                        override fun onPageFinished(view: WebView?, url: String?) {
+                                            isPlayerLoading = false
+                                        }
+
+                                        override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                                            super.onReceivedError(view, request, error)
+                                            if (request?.isForMainFrame == true) {
+                                                isPlayerLoading = false
+                                            }
+                                        }
+
+                                        // CRITICAL CRASH INTERCEPTOR: Returning true stops Android from killing the app process!
+                                        override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                                            Log.w("WatchScreen", "WebView renderer crash intercepted cleanly: $detail")
+                                            try {
+                                                view?.let {
+                                                    (it.parent as? ViewGroup)?.removeView(it)
+                                                    it.destroy()
+                                                }
+                                            } catch (e: Exception) {
+                                                Log.w("WatchScreen", "Error destroying crashed view: ${e.message}")
+                                            }
+                                            isRendererCrashed = true
+                                            isPlayerLoading = false
+                                            return true // Prevent app crash!
+                                        }
+                                    }
+                                    loadUrl(activeStreamUrl)
+                                }
+                            },
+                            update = { webView ->
+                                if (webView.url != activeStreamUrl && !isRendererCrashed) {
+                                    isPlayerLoading = true
+                                    webView.loadUrl(activeStreamUrl)
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+
+                    if (isPlayerLoading) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.5f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+
+            // Server Selection Row
+            if (streamSources.size > 1) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Pilih Server:", style = MaterialTheme.typography.labelSmall, color = Color.LightGray)
+                    streamSources.forEachIndexed { index, src ->
+                        FilterChip(
+                            selected = selectedServerIndex == index,
+                            onClick = {
+                                selectedServerIndex = index
+                                isRendererCrashed = false
+                                isPlayerLoading = true
+                                reloadTrigger++
+                            },
+                            label = { Text(src.source, fontSize = 11.sp) }
+                        )
                     }
                 }
             }
@@ -229,7 +376,14 @@ fun WatchScreen(
                     val nextEpisode = episodes.find { it.episodeNumber == selectedEpisodeNumber + 1 }
 
                     OutlinedButton(
-                        onClick = { if (prevEpisode != null) selectedEpisodeNumber = prevEpisode.episodeNumber },
+                        onClick = {
+                            if (prevEpisode != null) {
+                                selectedEpisodeNumber = prevEpisode.episodeNumber
+                                isRendererCrashed = false
+                                isPlayerLoading = true
+                                reloadTrigger++
+                            }
+                        },
                         enabled = prevEpisode != null,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(
@@ -254,7 +408,14 @@ fun WatchScreen(
                     }
 
                     OutlinedButton(
-                        onClick = { if (nextEpisode != null) selectedEpisodeNumber = nextEpisode.episodeNumber },
+                        onClick = {
+                            if (nextEpisode != null) {
+                                selectedEpisodeNumber = nextEpisode.episodeNumber
+                                isRendererCrashed = false
+                                isPlayerLoading = true
+                                reloadTrigger++
+                            }
+                        },
                         enabled = nextEpisode != null,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(
@@ -291,7 +452,12 @@ fun WatchScreen(
                             modifier = Modifier
                                 .width(52.dp)
                                 .height(44.dp)
-                                .clickable { selectedEpisodeNumber = epNum }
+                                .clickable {
+                                    selectedEpisodeNumber = epNum
+                                    isRendererCrashed = false
+                                    isPlayerLoading = true
+                                    reloadTrigger++
+                                }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(
